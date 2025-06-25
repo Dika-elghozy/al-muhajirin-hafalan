@@ -36,71 +36,91 @@ try:
 except Exception as e:
     st.error(f"⚠️ Gagal inisialisasi Firebase: {e}")
 
-# Inisialisasi Firestore
+# Firestore client
 db = firestore.client()
 
-# Fungsi ambil data
+# Fungsi bantu
 def ambil_data_dari_firestore(bulan, tahun):
-    return [
-        doc.to_dict()
-        for doc in db.collection("hafalan_santri_al_muhajirin")
-        .where("bulan", "==", bulan)
-        .where("tahun", "==", tahun)
-        .stream()
-    ]
+    return [doc.to_dict() for doc in db.collection("hafalan_santri_al_muhajirin")
+            .where("bulan", "==", bulan).where("tahun", "==", tahun).stream()]
 
-# Judul halaman
+def ambil_data_dari_nama(nama):
+    return [doc.to_dict() for doc in db.collection("hafalan_santri_al_muhajirin")
+            .where("nama", "==", nama).stream()]
+
+def ambil_daftar_santri():
+    return sorted([doc.to_dict()["nama"] for doc in db.collection("santri_master").stream()])
+
+# Tampilan utama
 st.title("📗 Evaluasi Hafalan Santri - Tampilan Wali")
 
-# Pilihan periode
-today = datetime.today()
-bulan = st.selectbox("Bulan", [
+menu = st.radio("Pilih Tampilan", ["Periode Bulanan", "Riwayat Santri"])
+
+bulan_list = [
     "Januari", "Februari", "Maret", "April", "Mei", "Juni",
     "Juli", "Agustus", "September", "Oktober", "November", "Desember"
-], index=today.month - 1)
-tahun = st.selectbox("Tahun", [str(y) for y in range(2023, 2027)], index=2)
+]
+tahun_list = [str(y) for y in range(2023, 2027)]
+today = datetime.today()
 
-# Tombol untuk tampilkan
-df = pd.DataFrame()
-if st.button("Tampilkan Evaluasi"):
-    df = pd.DataFrame(ambil_data_dari_firestore(bulan, tahun))
-    if len(df) >= 2:
-        df['juz'] = df['juz'].apply(lambda x: ', '.join(map(str, x)) if isinstance(x, list) else '-')
-        df['jumlah_hafalan_berbobot'] = df['jumlah_hafalan']
+# === Tampilan Periode Bulanan ===
+if menu == "Periode Bulanan":
+    bulan = st.selectbox("Bulan", bulan_list, index=today.month - 1)
+    tahun = st.selectbox("Tahun", tahun_list, index=tahun_list.index(str(today.year)))
 
-        # Clustering
-        features = df[['jumlah_hafalan_berbobot', 'kelancaran_total', 'kehadiran']]
-        features_scaled = StandardScaler().fit_transform(features)
-        kmeans = KMeans(n_clusters=3, random_state=42, n_init='auto')
-        df['Klaster'] = kmeans.fit_predict(features_scaled)
+    if st.button("Tampilkan Evaluasi"):
+        df = pd.DataFrame(ambil_data_dari_firestore(bulan, tahun))
+        if len(df) >= 2:
+            df['juz'] = df['juz'].apply(lambda x: ', '.join(map(str, x)) if isinstance(x, list) else '-')
+            df['jumlah_hafalan_berbobot'] = df['jumlah_hafalan']
 
-        # Label kategori
-        order = df.groupby('Klaster')['jumlah_hafalan_berbobot'].mean().sort_values(ascending=False).index
-        mapping = {
-            order[0]: 'Cepat & Konsisten',
-            order[1]: 'Cukup Baik',
-            order[2]: 'Perlu Pendampingan'
-        }
-        df['Kategori'] = df['Klaster'].map(mapping)
+            features = df[['jumlah_hafalan_berbobot', 'kelancaran_total', 'kehadiran']]
+            features_scaled = StandardScaler().fit_transform(features)
 
-        # Tampilkan hasil
-        st.success("✅ Data berhasil ditampilkan.")
-        st.dataframe(df[[
-            'nama', 'juz', 'juz_sedang', 'ayat_disetor', 'ayat_sedang_disetor', 'kehadiran', 'Kategori']])
+            kmeans = KMeans(n_clusters=3, random_state=42, n_init='auto')
+            df['Klaster'] = kmeans.fit_predict(features_scaled)
 
-        fig = px.pie(df, names='Kategori', title='Distribusi Santri Berdasarkan Hasil Evaluasi')
-        st.plotly_chart(fig)
+            order = df.groupby('Klaster')['jumlah_hafalan_berbobot'].mean().sort_values(ascending=False).index
+            mapping = {
+                order[0]: 'Cepat & Konsisten',
+                order[1]: 'Cukup Baik',
+                order[2]: 'Perlu Pendampingan'
+            }
+            df['Kategori'] = df['Klaster'].map(mapping)
 
-        fig2, ax2 = plt.subplots()
-        sns.scatterplot(
-            data=df,
-            x='jumlah_hafalan_berbobot',
-            y='kelancaran_total',
-            hue='Kategori',
-            palette='Set2', s=100
-        )
-        ax2.set_xlabel("Jumlah Hafalan")
-        ax2.set_ylabel("Kelancaran Hafalan")
-        st.pyplot(fig2)
-    else:
-        st.warning("❗ Minimal 2 data diperlukan untuk evaluasi.")
+            st.success("✅ Data berhasil ditampilkan.")
+            st.dataframe(df[[
+                'nama', 'juz', 'juz_sedang',
+                'ayat_disetor', 'ayat_sedang_disetor',
+                'kehadiran', 'Kategori'
+            ]])
+
+            st.plotly_chart(px.pie(df, names='Kategori', title='Distribusi Santri Berdasarkan Kategori'))
+
+            fig, ax = plt.subplots()
+            sns.scatterplot(
+                data=df,
+                x='jumlah_hafalan_berbobot',
+                y='kelancaran_total',
+                hue='Kategori',
+                palette='Set2',
+                s=100
+            )
+            ax.set_xlabel("Jumlah Hafalan")
+            ax.set_ylabel("Kelancaran Hafalan")
+            st.pyplot(fig)
+        else:
+            st.warning("❗ Minimal 2 data diperlukan untuk evaluasi.")
+
+# === Tampilan Riwayat Santri ===
+elif menu == "Riwayat Santri":
+    st.subheader("📄 Riwayat Hafalan Santri")
+    nama = st.selectbox("Pilih Nama Santri", ambil_daftar_santri())
+    if st.button("Tampilkan Riwayat"):
+        data = ambil_data_dari_nama(nama)
+        if data:
+            df = pd.DataFrame(data)
+            df['juz'] = df['juz'].apply(lambda x: ', '.join(map(str, x)) if isinstance(x, list) else x)
+            st.dataframe(df.sort_values(by=["tahun", "bulan"], ascending=False))
+        else:
+            st.warning("📭 Riwayat tidak ditemukan.")
